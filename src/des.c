@@ -286,3 +286,58 @@ int des_round(unsigned char left[DES_HALF_BYTES],
     }
     return DES_OK;
 }
+
+static int des_crypt_block(const unsigned char input[DES_BLOCK_BYTES],
+                           unsigned char output[DES_BLOCK_BYTES],
+                           const DES_KEY_SCHEDULE *schedule,
+                           int decrypt)
+{
+    unsigned char state[DES_BLOCK_BYTES];
+    unsigned char left[DES_HALF_BYTES];
+    unsigned char right[DES_HALF_BYTES];
+    unsigned char preoutput[DES_BLOCK_BYTES];
+    unsigned int round;
+    unsigned int subkey_index;
+    int result;
+
+    if (input == NULL || output == NULL || schedule == NULL) {
+        return DES_ERR_NULL;
+    }
+
+    result = des_initial_permutation(input, state);
+    if (result != DES_OK) {
+        return result;
+    }
+    memcpy(left, state, DES_HALF_BYTES);
+    memcpy(right, state + DES_HALF_BYTES, DES_HALF_BYTES);
+
+    for (round = 0U; round < DES_ROUNDS; ++round) {
+        if (decrypt != 0) {
+            subkey_index = DES_ROUNDS - 1U - round;
+        } else {
+            subkey_index = round;
+        }
+        result = des_round(left, right, schedule->subkeys[subkey_index]);
+        if (result != DES_OK) {
+            return result;
+        }
+    }
+
+    memcpy(preoutput, right, DES_HALF_BYTES);
+    memcpy(preoutput + DES_HALF_BYTES, left, DES_HALF_BYTES);
+    return des_final_permutation(preoutput, output);
+}
+
+int des_encrypt_block(const unsigned char input[DES_BLOCK_BYTES],
+                      unsigned char output[DES_BLOCK_BYTES],
+                      const DES_KEY_SCHEDULE *schedule)
+{
+    return des_crypt_block(input, output, schedule, 0);
+}
+
+int des_decrypt_block(const unsigned char input[DES_BLOCK_BYTES],
+                      unsigned char output[DES_BLOCK_BYTES],
+                      const DES_KEY_SCHEDULE *schedule)
+{
+    return des_crypt_block(input, output, schedule, 1);
+}

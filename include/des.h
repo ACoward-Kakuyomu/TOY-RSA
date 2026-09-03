@@ -10,6 +10,10 @@
 #define DES_ERR_NULL (-1)
 #define DES_ERR_RANGE (-2)
 #define DES_ERR_ALIAS (-3)
+#define DES_ERR_LENGTH (-4)
+#define DES_ERR_CAPACITY (-5)
+#define DES_ERR_FORMAT (-6)
+#define DES_ERR_IO (-7)
 
 typedef struct des_key_schedule_tag {
     unsigned char subkeys[DES_ROUNDS][DES_SUBKEY_BYTES];
@@ -50,5 +54,13 @@ int des_f(const unsigned char right[DES_HALF_BYTES],
 int des_round(unsigned char left[DES_HALF_BYTES],
               unsigned char right[DES_HALF_BYTES],
               const unsigned char subkey[DES_SUBKEY_BYTES]);
+
+int des_encrypt_block(const unsigned char input[DES_BLOCK_BYTES],
+                      unsigned char output[DES_BLOCK_BYTES],
+                      const DES_KEY_SCHEDULE *schedule);
+
+int des_decrypt_block(const unsigned char input[DES_BLOCK_BYTES],
+                      unsigned char output[DES_BLOCK_BYTES],
+                      const DES_KEY_SCHEDULE *schedule);
 
 #endif
