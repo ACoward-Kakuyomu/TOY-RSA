@@ -8,6 +8,7 @@ add_library(toy_rsa
     src/cbc.c
     src/des.c
     src/des_tables.c
+    src/mmo.c
 )
 
 target_include_directories(toy_rsa
@@ -131,4 +132,23 @@ if(BUILD_TESTING)
             -DSAMPLE_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sample-test
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_samples.cmake
     )
+    add_executable(test_mmo tests/test_mmo.c)
+    target_link_libraries(test_mmo PRIVATE toy_rsa)
+    set_target_properties(test_mmo PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_mmo PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_mmo PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_mmo PRIVATE -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_mmo PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week3_mmo_digest COMMAND test_mmo)
 endif()
