@@ -9,6 +9,7 @@ add_library(toy_rsa
     src/des.c
     src/des_tables.c
     src/mmo.c
+    src/rng.c
 )
 
 target_include_directories(toy_rsa
@@ -151,4 +152,24 @@ if(BUILD_TESTING)
         endif()
     endif()
     add_test(NAME week3_mmo_digest COMMAND test_mmo)
+
+    add_executable(test_rng tests/test_rng.c)
+    target_link_libraries(test_rng PRIVATE toy_rsa)
+    set_target_properties(test_rng PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_rng PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_rng PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_rng PRIVATE -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_rng PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week4_des_rng COMMAND test_rng)
 endif()
