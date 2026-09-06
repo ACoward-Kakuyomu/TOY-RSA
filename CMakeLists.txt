@@ -3,8 +3,17 @@ cmake_minimum_required(VERSION 3.23)
 project(toy_rsa VERSION 0.1.0 LANGUAGES C)
 
 option(TOY_RSA_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+set(TOY_RSA_BIGINT_MAX_BITS 1024 CACHE STRING
+    "Maximum multi-precision integer width in bits")
+
+math(EXPR TOY_RSA_BIGINT_REMAINDER "${TOY_RSA_BIGINT_MAX_BITS} % 16")
+if(TOY_RSA_BIGINT_MAX_BITS LESS 16 OR NOT TOY_RSA_BIGINT_REMAINDER EQUAL 0)
+    message(FATAL_ERROR
+        "TOY_RSA_BIGINT_MAX_BITS must be at least 16 and a multiple of 16")
+endif()
 
 add_library(toy_rsa
+    src/bigint.c
     src/cbc.c
     src/des.c
     src/des_tables.c
@@ -17,6 +26,10 @@ target_include_directories(toy_rsa
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_compile_definitions(toy_rsa
+    PUBLIC BIGINT_MAX_BITS=${TOY_RSA_BIGINT_MAX_BITS}
 )
 
 set_target_properties(toy_rsa PROPERTIES
@@ -172,4 +185,24 @@ if(BUILD_TESTING)
         endif()
     endif()
     add_test(NAME week4_des_rng COMMAND test_rng)
+
+    add_executable(test_bigint tests/test_bigint.c)
+    target_link_libraries(test_bigint PRIVATE toy_rsa)
+    set_target_properties(test_bigint PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_bigint PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_bigint PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_bigint PRIVATE -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_bigint PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week5_bigint COMMAND test_bigint)
 endif()
