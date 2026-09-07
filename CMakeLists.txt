@@ -18,6 +18,7 @@ add_library(toy_rsa
     src/des.c
     src/des_tables.c
     src/mmo.c
+    src/number.c
     src/rng.c
 )
 
@@ -205,4 +206,24 @@ if(BUILD_TESTING)
         endif()
     endif()
     add_test(NAME week5_bigint COMMAND test_bigint)
+
+    add_executable(test_number tests/test_number.c)
+    target_link_libraries(test_number PRIVATE toy_rsa)
+    set_target_properties(test_number PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_number PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_number PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_number PRIVATE -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_number PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week6_number_theory COMMAND test_number)
 endif()
