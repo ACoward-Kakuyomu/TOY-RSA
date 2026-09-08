@@ -43,10 +43,21 @@ int number_miller_rabin_bases(const BIGINT *candidate,
                               unsigned int rounds,
                               int *probable_prime);
 
+int number_miller_rabin_bases_conventional(
+    const BIGINT *candidate,
+    const unsigned long *bases,
+    unsigned int rounds,
+    int *probable_prime);
+
 int number_miller_rabin(const BIGINT *candidate,
                         RNG_CTX *rng,
                         unsigned int rounds,
                         int *probable_prime);
+
+int number_miller_rabin_conventional(const BIGINT *candidate,
+                                     RNG_CTX *rng,
+                                     unsigned int rounds,
+                                     int *probable_prime);
 
 int number_generate_probable_prime(RNG_CTX *rng,
                                    unsigned int bits,

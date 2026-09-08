@@ -83,6 +83,23 @@ static void init_test_rng(const char *name, RNG_CTX *rng)
                                       test_counter), RNG_OK);
 }
 
+static void expect_rng_state(const char *name,
+                             const RNG_CTX *left,
+                             const RNG_CTX *right)
+{
+    if (memcmp(left->key, right->key, RNG_DES_KEY_BYTES) != 0 ||
+        memcmp(left->state_vector, right->state_vector,
+               RNG_BLOCK_BYTES) != 0 ||
+        memcmp(left->counter, right->counter, RNG_BLOCK_BYTES) != 0 ||
+        memcmp(left->output_buffer, right->output_buffer,
+               RNG_BLOCK_BYTES) != 0 ||
+        left->output_index != right->output_index ||
+        left->status != right->status) {
+        fprintf(stderr, "%s: RNG states differ\n", name);
+        ++failures;
+    }
+}
+
 static void test_gcd(void)
 {
     BIGINT left;
@@ -247,6 +264,7 @@ static void expect_primality(const char *name,
 {
     BIGINT candidate;
     int probable;
+    int conventional;
 
     load_hex(name, &candidate, hex_value);
     probable = -1;
@@ -254,6 +272,12 @@ static void expect_primality(const char *name,
                number_miller_rabin_bases(&candidate, bases, rounds,
                                          &probable), NUMBER_OK);
     expect_int(name, probable, expected);
+    conventional = -1;
+    expect_int(name,
+               number_miller_rabin_bases_conventional(
+                   &candidate, bases, rounds, &conventional), NUMBER_OK);
+    expect_int(name, conventional, expected);
+    expect_int(name, probable, conventional);
 }
 
 static void test_miller_rabin(void)
@@ -266,8 +290,10 @@ static void test_miller_rabin(void)
     };
     BIGINT candidate;
     RNG_CTX rng;
+    RNG_CTX conventional_rng;
     unsigned int index;
     int probable;
+    int conventional;
 
     expect_primality("prime two", "2", bases, 9U, 1);
     expect_primality("prime three", "3", bases, 9U, 1);
@@ -293,11 +319,21 @@ static void test_miller_rabin(void)
 
     load_hex("random witness prime", &candidate, "78C27CE77");
     init_test_rng("random witness rng", &rng);
+    init_test_rng("conventional witness rng", &conventional_rng);
     probable = -1;
     expect_int("random witness Miller-Rabin",
                number_miller_rabin(&candidate, &rng, 8U, &probable),
                NUMBER_OK);
     expect_int("random witness prime result", probable, 1);
+    conventional = -1;
+    expect_int("conventional random witness Miller-Rabin",
+               number_miller_rabin_conventional(
+                   &candidate, &conventional_rng, 8U, &conventional),
+               NUMBER_OK);
+    expect_int("conventional random witness result", conventional, 1);
+    expect_int("random witness path agreement", probable, conventional);
+    expect_rng_state("random witness RNG agreement", &rng,
+                     &conventional_rng);
 
     memset(&rng, 0, sizeof(rng));
     probable = 77;

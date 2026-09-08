@@ -18,6 +18,7 @@ add_library(toy_rsa
     src/des.c
     src/des_tables.c
     src/mmo.c
+    src/montgomery.c
     src/number.c
     src/rng.c
 )
@@ -97,6 +98,26 @@ endfunction()
 
 add_toy_rsa_demo(toy_des tools/des_demo.c)
 set_target_properties(toy_des PROPERTIES OUTPUT_NAME des)
+
+add_executable(benchmark_montgomery tools/benchmark.c)
+target_link_libraries(benchmark_montgomery PRIVATE toy_rsa)
+set_target_properties(benchmark_montgomery PROPERTIES
+    C_STANDARD 90
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
+if(MSVC)
+    target_compile_options(benchmark_montgomery PRIVATE /W4)
+    if(TOY_RSA_WARNINGS_AS_ERRORS)
+        target_compile_options(benchmark_montgomery PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(benchmark_montgomery PRIVATE
+        -Wall -Wextra -Wpedantic)
+    if(TOY_RSA_WARNINGS_AS_ERRORS)
+        target_compile_options(benchmark_montgomery PRIVATE -Werror)
+    endif()
+endif()
 
 include(CTest)
 
@@ -226,4 +247,25 @@ if(BUILD_TESTING)
         endif()
     endif()
     add_test(NAME week6_number_theory COMMAND test_number)
+
+    add_executable(test_montgomery tests/test_montgomery.c)
+    target_link_libraries(test_montgomery PRIVATE toy_rsa)
+    set_target_properties(test_montgomery PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_montgomery PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_montgomery PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_montgomery PRIVATE
+            -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_montgomery PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week7_montgomery COMMAND test_montgomery)
 endif()

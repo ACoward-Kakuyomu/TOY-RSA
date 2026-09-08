@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "montgomery.h"
 #include "number.h"
 
 static const unsigned short number_small_primes[] = {
@@ -30,6 +31,14 @@ static const unsigned short number_small_primes[] = {
 static int number_bigint_error(int result)
 {
     if (result == BIGINT_ERR_INVALID) {
+        return NUMBER_ERR_INVALID;
+    }
+    return NUMBER_ERR_ARITHMETIC;
+}
+
+static int number_montgomery_error(int result)
+{
+    if (result == MONT_ERR_INVALID) {
         return NUMBER_ERR_INVALID;
     }
     return NUMBER_ERR_ARITHMETIC;
@@ -614,7 +623,7 @@ static int number_prepare_miller_rabin(const BIGINT *candidate,
     return NUMBER_OK;
 }
 
-static int number_miller_rabin_witness(
+static int number_miller_rabin_witness_conventional(
     const BIGINT *candidate,
     const BIGINT *odd_part,
     const BIGINT *candidate_minus_one,
@@ -666,6 +675,80 @@ static int number_miller_rabin_witness(
             return NUMBER_OK;
         }
         status = number_compare(&x, &one, &comparison);
+        if (status != NUMBER_OK) {
+            return status;
+        }
+        if (comparison == 0) {
+            *passes = 0;
+            return NUMBER_OK;
+        }
+    }
+    *passes = 0;
+    return NUMBER_OK;
+}
+
+static int number_miller_rabin_witness_montgomery(
+    const MONT_CTX *context,
+    const BIGINT *odd_part,
+    const BIGINT *candidate_minus_one,
+    unsigned int power_of_two,
+    const BIGINT *witness,
+    int *passes)
+{
+    BIGINT x;
+    BIGINT x_bar;
+    BIGINT minus_one_bar;
+    BIGINT one;
+    unsigned int round;
+    int comparison;
+    int status;
+
+    status = bigint_from_ulong(&one, 1UL);
+    if (status != BIGINT_OK) {
+        return number_bigint_error(status);
+    }
+    status = mont_pow(context, witness, odd_part, &x);
+    if (status != MONT_OK) {
+        return number_montgomery_error(status);
+    }
+    status = number_compare(&x, &one, &comparison);
+    if (status != NUMBER_OK) {
+        return status;
+    }
+    if (comparison == 0) {
+        *passes = 1;
+        return NUMBER_OK;
+    }
+    status = number_compare(&x, candidate_minus_one, &comparison);
+    if (status != NUMBER_OK) {
+        return status;
+    }
+    if (comparison == 0) {
+        *passes = 1;
+        return NUMBER_OK;
+    }
+    status = mont_to(context, &x, &x_bar);
+    if (status != MONT_OK) {
+        return number_montgomery_error(status);
+    }
+    status = mont_to(context, candidate_minus_one, &minus_one_bar);
+    if (status != MONT_OK) {
+        return number_montgomery_error(status);
+    }
+    for (round = 1U; round < power_of_two; ++round) {
+        status = mont_mul(context, &x_bar, &x_bar, &x_bar);
+        if (status != MONT_OK) {
+            return number_montgomery_error(status);
+        }
+        status = number_compare(&x_bar, &minus_one_bar, &comparison);
+        if (status != NUMBER_OK) {
+            return status;
+        }
+        if (comparison == 0) {
+            *passes = 1;
+            return NUMBER_OK;
+        }
+        status = number_compare(&x_bar, &context->r_mod_n, &comparison);
         if (status != NUMBER_OK) {
             return status;
         }
@@ -744,14 +827,16 @@ static int number_mapped_witness(unsigned long base,
     return NUMBER_OK;
 }
 
-int number_miller_rabin_bases(const BIGINT *candidate,
-                              const unsigned long *bases,
-                              unsigned int rounds,
-                              int *probable_prime)
+static int number_miller_rabin_bases_impl(const BIGINT *candidate,
+                                          const unsigned long *bases,
+                                          unsigned int rounds,
+                                          int *probable_prime,
+                                          int use_montgomery)
 {
     BIGINT odd_part;
     BIGINT candidate_minus_one;
     BIGINT witness;
+    MONT_CTX context;
     unsigned int power_of_two;
     unsigned int round;
     int finished;
@@ -788,15 +873,26 @@ int number_miller_rabin_bases(const BIGINT *candidate,
     if (status != NUMBER_OK) {
         return status;
     }
+    if (use_montgomery != 0) {
+        status = mont_init(&context, candidate);
+        if (status != MONT_OK) {
+            return number_montgomery_error(status);
+        }
+    }
     for (round = 0U; round < rounds; ++round) {
         status = number_mapped_witness(bases[round], candidate, &witness);
         if (status != NUMBER_OK) {
             return status;
         }
-        status = number_miller_rabin_witness(candidate, &odd_part,
-                                              &candidate_minus_one,
-                                              power_of_two, &witness,
-                                              &passes);
+        if (use_montgomery != 0) {
+            status = number_miller_rabin_witness_montgomery(
+                &context, &odd_part, &candidate_minus_one,
+                power_of_two, &witness, &passes);
+        } else {
+            status = number_miller_rabin_witness_conventional(
+                candidate, &odd_part, &candidate_minus_one,
+                power_of_two, &witness, &passes);
+        }
         if (status != NUMBER_OK) {
             return status;
         }
@@ -807,6 +903,25 @@ int number_miller_rabin_bases(const BIGINT *candidate,
     }
     *probable_prime = 1;
     return NUMBER_OK;
+}
+
+int number_miller_rabin_bases(const BIGINT *candidate,
+                              const unsigned long *bases,
+                              unsigned int rounds,
+                              int *probable_prime)
+{
+    return number_miller_rabin_bases_impl(candidate, bases, rounds,
+                                          probable_prime, 1);
+}
+
+int number_miller_rabin_bases_conventional(
+    const BIGINT *candidate,
+    const unsigned long *bases,
+    unsigned int rounds,
+    int *probable_prime)
+{
+    return number_miller_rabin_bases_impl(candidate, bases, rounds,
+                                          probable_prime, 0);
 }
 
 static int number_random_witness(RNG_CTX *rng,
@@ -872,14 +987,16 @@ static int number_random_witness(RNG_CTX *rng,
     return NUMBER_ERR_RNG;
 }
 
-int number_miller_rabin(const BIGINT *candidate,
-                        RNG_CTX *rng,
-                        unsigned int rounds,
-                        int *probable_prime)
+static int number_miller_rabin_impl(const BIGINT *candidate,
+                                    RNG_CTX *rng,
+                                    unsigned int rounds,
+                                    int *probable_prime,
+                                    int use_montgomery)
 {
     BIGINT odd_part;
     BIGINT candidate_minus_one;
     BIGINT witness;
+    MONT_CTX context;
     unsigned int power_of_two;
     unsigned int round;
     int finished;
@@ -911,15 +1028,26 @@ int number_miller_rabin(const BIGINT *candidate,
     if (status != NUMBER_OK) {
         return status;
     }
+    if (use_montgomery != 0) {
+        status = mont_init(&context, candidate);
+        if (status != MONT_OK) {
+            return number_montgomery_error(status);
+        }
+    }
     for (round = 0U; round < rounds; ++round) {
         status = number_random_witness(rng, candidate, &witness);
         if (status != NUMBER_OK) {
             return status;
         }
-        status = number_miller_rabin_witness(candidate, &odd_part,
-                                              &candidate_minus_one,
-                                              power_of_two, &witness,
-                                              &passes);
+        if (use_montgomery != 0) {
+            status = number_miller_rabin_witness_montgomery(
+                &context, &odd_part, &candidate_minus_one,
+                power_of_two, &witness, &passes);
+        } else {
+            status = number_miller_rabin_witness_conventional(
+                candidate, &odd_part, &candidate_minus_one,
+                power_of_two, &witness, &passes);
+        }
         if (status != NUMBER_OK) {
             return status;
         }
@@ -930,6 +1058,24 @@ int number_miller_rabin(const BIGINT *candidate,
     }
     *probable_prime = 1;
     return NUMBER_OK;
+}
+
+int number_miller_rabin(const BIGINT *candidate,
+                        RNG_CTX *rng,
+                        unsigned int rounds,
+                        int *probable_prime)
+{
+    return number_miller_rabin_impl(candidate, rng, rounds,
+                                    probable_prime, 1);
+}
+
+int number_miller_rabin_conventional(const BIGINT *candidate,
+                                     RNG_CTX *rng,
+                                     unsigned int rounds,
+                                     int *probable_prime)
+{
+    return number_miller_rabin_impl(candidate, rng, rounds,
+                                    probable_prime, 0);
 }
 
 static int number_random_candidate(RNG_CTX *rng,
