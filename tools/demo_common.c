@@ -10,6 +10,7 @@
 
 #include "cbc.h"
 #include "demo_common.h"
+#include "rsa.h"
 
 #define DEMO_ENTROPY_MIN 8UL
 #define DEMO_ENTROPY_MAX 4096UL
@@ -33,6 +34,80 @@ static int file_length(FILE *file, unsigned long *length)
     }
     *length = (unsigned long)position;
     return 1;
+}
+
+static int load_file(const char *path,
+                     unsigned long maximum_length,
+                     unsigned char **data,
+                     unsigned long *length)
+{
+    FILE *file;
+    unsigned char *buffer;
+    unsigned long file_size;
+
+    file = fopen(path, "rb");
+    if (file == NULL) {
+        fprintf(stderr, "cannot open input file: %s\n", path);
+        return 0;
+    }
+    if (!file_length(file, &file_size) || file_size > maximum_length ||
+        (unsigned long)(size_t)file_size != file_size) {
+        fprintf(stderr, "input file is too large or unreadable: %s\n",
+                path);
+        fclose(file);
+        return 0;
+    }
+    buffer = NULL;
+    if (file_size != 0UL) {
+        buffer = (unsigned char *)malloc((size_t)file_size);
+        if (buffer == NULL) {
+            fprintf(stderr, "not enough memory for: %s\n", path);
+            fclose(file);
+            return 0;
+        }
+        if (fread(buffer, 1U, (size_t)file_size, file) !=
+            (size_t)file_size) {
+            fprintf(stderr, "cannot read input file: %s\n", path);
+            memset(buffer, 0, (size_t)file_size);
+            free(buffer);
+            fclose(file);
+            return 0;
+        }
+    }
+    if (fclose(file) != 0) {
+        fprintf(stderr, "cannot close input file: %s\n", path);
+        if (buffer != NULL) {
+            memset(buffer, 0, (size_t)file_size);
+            free(buffer);
+        }
+        return 0;
+    }
+    *data = buffer;
+    *length = file_size;
+    return 1;
+}
+
+static int write_file(const char *path,
+                      const unsigned char *data,
+                      unsigned long length)
+{
+    FILE *file;
+    int ok;
+
+    file = fopen(path, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "cannot open output file: %s\n", path);
+        return 0;
+    }
+    ok = length == 0UL ||
+        fwrite(data, 1U, (size_t)length, file) == (size_t)length;
+    if (fclose(file) != 0) {
+        ok = 0;
+    }
+    if (!ok) {
+        fprintf(stderr, "cannot write output file: %s\n", path);
+    }
+    return ok;
 }
 
 static int copy_temporary_file(FILE *temporary, const char *output_path)
@@ -185,5 +260,128 @@ int demo_run_des_file(int encrypting,
                encrypting ? "encrypted" : "decrypted",
                input_length, output_length);
     }
+    return ok;
+}
+
+int demo_parse_bits(const char *text, unsigned int *bits)
+{
+    char *end;
+    unsigned long value;
+
+    errno = 0;
+    end = NULL;
+    value = strtoul(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value > UINT_MAX) {
+        return 0;
+    }
+    *bits = (unsigned int)value;
+    return 1;
+}
+
+static int init_rng_from_file(const char *path,
+                              RNG_CTX *rng,
+                              unsigned char **entropy,
+                              unsigned long *entropy_length)
+{
+    int status;
+
+    if (!load_file(path, DEMO_ENTROPY_MAX, entropy, entropy_length)) {
+        return 0;
+    }
+    if (*entropy_length < DEMO_ENTROPY_MIN) {
+        fprintf(stderr, "entropy file must contain at least 8 bytes\n");
+        if (*entropy != NULL) {
+            memset(*entropy, 0, (size_t)*entropy_length);
+            free(*entropy);
+            *entropy = NULL;
+        }
+        return 0;
+    }
+    status = rng_init(rng, *entropy, *entropy_length);
+    if (status != RNG_OK) {
+        fprintf(stderr, "RNG initialization failed: %d\n", status);
+        memset(*entropy, 0, (size_t)*entropy_length);
+        free(*entropy);
+        *entropy = NULL;
+        return 0;
+    }
+    return 1;
+}
+
+int demo_run_rsa_keygen(const char *entropy_path,
+                        const char *public_path,
+                        const char *private_path,
+                        unsigned int bits)
+{
+    RNG_CTX rng;
+    RSA_PRIVATE_KEY private_key;
+    RSA_KEYGEN_STATS statistics;
+    unsigned char *entropy;
+    unsigned long entropy_length;
+    unsigned char public_data[RSA_PUBLIC_KEY_MAX_SERIALIZED];
+    unsigned char private_data[RSA_PRIVATE_KEY_MAX_SERIALIZED];
+    unsigned int public_length;
+    unsigned int private_length;
+    int status;
+    int ok;
+
+    if (same_path(public_path, private_path) ||
+        same_path(entropy_path, public_path) ||
+        same_path(entropy_path, private_path)) {
+        fprintf(stderr, "entropy, public, and private paths must differ\n");
+        return 0;
+    }
+    entropy = NULL;
+    entropy_length = 0UL;
+    if (!init_rng_from_file(entropy_path, &rng, &entropy,
+                            &entropy_length)) {
+        return 0;
+    }
+    status = rsa_generate_key(&rng, bits, 12U, 100000UL, 256U,
+                              &private_key, &statistics);
+    if (status != RSA_OK) {
+        fprintf(stderr, "RSA key generation failed: %d\n", status);
+        ok = 0;
+        goto cleanup;
+    }
+    public_length = 0U;
+    status = rsa_serialize_public_key(&private_key.public_key,
+                                      public_data, sizeof(public_data),
+                                      &public_length);
+    if (status != RSA_OK) {
+        fprintf(stderr, "public key serialization failed: %d\n", status);
+        ok = 0;
+        goto cleanup;
+    }
+    private_length = 0U;
+    status = rsa_serialize_private_key(&private_key,
+                                       private_data, sizeof(private_data),
+                                       &private_length);
+    if (status != RSA_OK) {
+        fprintf(stderr, "private key serialization failed: %d\n", status);
+        ok = 0;
+        goto cleanup;
+    }
+    ok = write_file(public_path, public_data,
+                    (unsigned long)public_length) &&
+        write_file(private_path, private_data,
+                   (unsigned long)private_length);
+    if (ok) {
+        printf("RSA key generated: %u bits\n", bits);
+        printf("prime candidates: p=%lu, q=%lu, restarts=%u\n",
+               statistics.p_candidates, statistics.q_candidates,
+               statistics.restarts);
+        printf("public key: %s\nprivate key: %s\n",
+               public_path, private_path);
+    }
+
+cleanup:
+    if (entropy != NULL) {
+        memset(entropy, 0, (size_t)entropy_length);
+        free(entropy);
+    }
+    memset(&rng, 0, sizeof(rng));
+    memset(&private_key, 0, sizeof(private_key));
+    memset(private_data, 0, sizeof(private_data));
     return ok;
 }

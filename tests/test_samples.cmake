@@ -1,4 +1,4 @@
-if(NOT DEFINED DES_EXE OR
+if(NOT DEFINED DES_EXE OR NOT DEFINED RSA_KEYGEN_EXE OR
    NOT DEFINED SAMPLE_TEST_DIR)
     message(FATAL_ERROR "sample executable paths and test directory are required")
 endif()
@@ -11,6 +11,8 @@ set(key_entropy "${SAMPLE_TEST_DIR}/key-entropy.bin")
 set(message_entropy "${SAMPLE_TEST_DIR}/message-entropy.bin")
 set(des_cipher "${SAMPLE_TEST_DIR}/des.bin")
 set(des_plain "${SAMPLE_TEST_DIR}/des-restored.txt")
+set(public_key "${SAMPLE_TEST_DIR}/public.trp8")
+set(private_key "${SAMPLE_TEST_DIR}/private.trs8")
 
 file(WRITE "${plain}"
     "TOY-RSA sample file\nDES-CBC and hybrid round trip.\n")
@@ -44,4 +46,11 @@ execute_process(
 )
 if(NOT compare_result EQUAL 0)
     message(FATAL_ERROR "DES sample round trip differs")
+endif()
+
+run_sample("RSA key generation"
+    "${RSA_KEYGEN_EXE}" "${key_entropy}"
+    "${public_key}" "${private_key}" 256)
+if(NOT compare_result EQUAL 0)
+    message(FATAL_ERROR "hybrid sample round trip differs")
 endif()

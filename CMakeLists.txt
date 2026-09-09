@@ -21,6 +21,7 @@ add_library(toy_rsa
     src/montgomery.c
     src/number.c
     src/rng.c
+    src/rsa.c
 )
 
 target_include_directories(toy_rsa
@@ -97,7 +98,9 @@ function(add_toy_rsa_demo target source)
 endfunction()
 
 add_toy_rsa_demo(toy_des tools/des_demo.c)
+add_toy_rsa_demo(toy_rsa_keygen tools/rsa_keygen_demo.c)
 set_target_properties(toy_des PROPERTIES OUTPUT_NAME des)
+set_target_properties(toy_rsa_keygen PROPERTIES OUTPUT_NAME rsa-keygen)
 
 add_executable(benchmark_montgomery tools/benchmark.c)
 target_link_libraries(benchmark_montgomery PRIVATE toy_rsa)
@@ -116,6 +119,25 @@ else()
         -Wall -Wextra -Wpedantic)
     if(TOY_RSA_WARNINGS_AS_ERRORS)
         target_compile_options(benchmark_montgomery PRIVATE -Werror)
+    endif()
+endif()
+
+add_executable(benchmark_rsa tools/rsa_benchmark.c)
+target_link_libraries(benchmark_rsa PRIVATE toy_rsa)
+set_target_properties(benchmark_rsa PROPERTIES
+    C_STANDARD 90
+    C_STANDARD_REQUIRED YES
+    C_EXTENSIONS NO
+)
+if(MSVC)
+    target_compile_options(benchmark_rsa PRIVATE /W4)
+    if(TOY_RSA_WARNINGS_AS_ERRORS)
+        target_compile_options(benchmark_rsa PRIVATE /WX)
+    endif()
+else()
+    target_compile_options(benchmark_rsa PRIVATE -Wall -Wextra -Wpedantic)
+    if(TOY_RSA_WARNINGS_AS_ERRORS)
+        target_compile_options(benchmark_rsa PRIVATE -Werror)
     endif()
 endif()
 
@@ -162,12 +184,6 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME week2_des_and_cbc COMMAND test_cbc)
 
-    add_test(NAME week2_file_samples
-        COMMAND ${CMAKE_COMMAND}
-            -DDES_EXE=$<TARGET_FILE:toy_des>
-            -DSAMPLE_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sample-test
-            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_samples.cmake
-    )
     add_executable(test_mmo tests/test_mmo.c)
     target_link_libraries(test_mmo PRIVATE toy_rsa)
     set_target_properties(test_mmo PROPERTIES
@@ -268,4 +284,32 @@ if(BUILD_TESTING)
         endif()
     endif()
     add_test(NAME week7_montgomery COMMAND test_montgomery)
+
+    add_executable(test_rsa tests/test_rsa.c)
+    target_link_libraries(test_rsa PRIVATE toy_rsa)
+    set_target_properties(test_rsa PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_rsa PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_rsa PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_rsa PRIVATE -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_rsa PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week8_rsa COMMAND test_rsa)
+
+    add_test(NAME week2_8_file_samples
+        COMMAND ${CMAKE_COMMAND}
+            -DDES_EXE=$<TARGET_FILE:toy_des>
+            -DRSA_KEYGEN_EXE=$<TARGET_FILE:toy_rsa_keygen>
+            -DSAMPLE_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sample-test
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_samples.cmake
+    )
 endif()
