@@ -14,4 +14,13 @@ int demo_run_rsa_keygen(const char *entropy_path,
                         const char *private_path,
                         unsigned int bits);
 
+int demo_run_hybrid_encrypt(const char *public_path,
+                            const char *entropy_path,
+                            const char *input_path,
+                            const char *output_path);
+
+int demo_run_hybrid_decrypt(const char *private_path,
+                            const char *input_path,
+                            const char *output_path);
+
 #endif

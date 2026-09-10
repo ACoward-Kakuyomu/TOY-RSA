@@ -17,6 +17,7 @@ add_library(toy_rsa
     src/cbc.c
     src/des.c
     src/des_tables.c
+    src/hybrid.c
     src/mmo.c
     src/montgomery.c
     src/number.c
@@ -99,8 +100,10 @@ endfunction()
 
 add_toy_rsa_demo(toy_des tools/des_demo.c)
 add_toy_rsa_demo(toy_rsa_keygen tools/rsa_keygen_demo.c)
+add_toy_rsa_demo(toy_hybrid tools/hybrid_demo.c)
 set_target_properties(toy_des PROPERTIES OUTPUT_NAME des)
 set_target_properties(toy_rsa_keygen PROPERTIES OUTPUT_NAME rsa-keygen)
+set_target_properties(toy_hybrid PROPERTIES OUTPUT_NAME hybrid)
 
 add_executable(benchmark_montgomery tools/benchmark.c)
 target_link_libraries(benchmark_montgomery PRIVATE toy_rsa)
@@ -305,10 +308,31 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME week8_rsa COMMAND test_rsa)
 
-    add_test(NAME week2_8_file_samples
+    add_executable(test_hybrid tests/test_hybrid.c)
+    target_link_libraries(test_hybrid PRIVATE toy_rsa)
+    set_target_properties(test_hybrid PROPERTIES
+        C_STANDARD 90
+        C_STANDARD_REQUIRED YES
+        C_EXTENSIONS NO
+    )
+    if(MSVC)
+        target_compile_options(test_hybrid PRIVATE /W4)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_hybrid PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(test_hybrid PRIVATE -Wall -Wextra -Wpedantic)
+        if(TOY_RSA_WARNINGS_AS_ERRORS)
+            target_compile_options(test_hybrid PRIVATE -Werror)
+        endif()
+    endif()
+    add_test(NAME week9_hybrid COMMAND test_hybrid)
+
+    add_test(NAME all_file_samples
         COMMAND ${CMAKE_COMMAND}
             -DDES_EXE=$<TARGET_FILE:toy_des>
             -DRSA_KEYGEN_EXE=$<TARGET_FILE:toy_rsa_keygen>
+            -DHYBRID_EXE=$<TARGET_FILE:toy_hybrid>
             -DSAMPLE_TEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/sample-test
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_samples.cmake
     )

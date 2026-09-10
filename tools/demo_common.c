@@ -10,7 +10,7 @@
 
 #include "cbc.h"
 #include "demo_common.h"
-#include "rsa.h"
+#include "hybrid.h"
 
 #define DEMO_ENTROPY_MIN 8UL
 #define DEMO_ENTROPY_MAX 4096UL
@@ -383,5 +383,196 @@ cleanup:
     memset(&rng, 0, sizeof(rng));
     memset(&private_key, 0, sizeof(private_key));
     memset(private_data, 0, sizeof(private_data));
+    return ok;
+}
+
+static int load_public_key(const char *path, RSA_PUBLIC_KEY *key)
+{
+    unsigned char *data;
+    unsigned long length;
+    int status;
+
+    data = NULL;
+    if (!load_file(path, RSA_PUBLIC_KEY_MAX_SERIALIZED, &data, &length)) {
+        return 0;
+    }
+    status = rsa_deserialize_public_key(data, (unsigned int)length, key);
+    if (data != NULL) {
+        free(data);
+    }
+    if (status != RSA_OK) {
+        fprintf(stderr, "invalid public key file: %s (status %d)\n",
+                path, status);
+        return 0;
+    }
+    return 1;
+}
+
+static int load_private_key(const char *path, RSA_PRIVATE_KEY *key)
+{
+    unsigned char *data;
+    unsigned long length;
+    int status;
+
+    data = NULL;
+    if (!load_file(path, RSA_PRIVATE_KEY_MAX_SERIALIZED, &data, &length)) {
+        return 0;
+    }
+    status = rsa_deserialize_private_key(data, (unsigned int)length, key);
+    if (data != NULL) {
+        memset(data, 0, (size_t)length);
+        free(data);
+    }
+    if (status != RSA_OK) {
+        fprintf(stderr, "invalid private key file: %s (status %d)\n",
+                path, status);
+        return 0;
+    }
+    return 1;
+}
+
+int demo_run_hybrid_encrypt(const char *public_path,
+                            const char *entropy_path,
+                            const char *input_path,
+                            const char *output_path)
+{
+    RSA_PUBLIC_KEY public_key;
+    RNG_CTX rng;
+    unsigned char *entropy;
+    unsigned char *plaintext;
+    unsigned char *ciphertext;
+    unsigned long entropy_length;
+    unsigned long plaintext_length;
+    unsigned long required;
+    unsigned long actual;
+    int status;
+    int ok;
+
+    if (same_path(output_path, public_path) ||
+        same_path(output_path, entropy_path) ||
+        same_path(output_path, input_path)) {
+        fprintf(stderr, "output path must differ from all input paths\n");
+        return 0;
+    }
+    if (!load_public_key(public_path, &public_key)) {
+        return 0;
+    }
+    entropy = NULL;
+    entropy_length = 0UL;
+    if (!init_rng_from_file(entropy_path, &rng, &entropy,
+                            &entropy_length)) {
+        return 0;
+    }
+    plaintext = NULL;
+    plaintext_length = 0UL;
+    ciphertext = NULL;
+    required = 0UL;
+    ok = 0;
+    if (!load_file(input_path, HYBRID_MAX_PLAINTEXT,
+                   &plaintext, &plaintext_length)) {
+        goto cleanup;
+    }
+    status = hybrid_ciphertext_size(&public_key, plaintext_length,
+                                    &required);
+    if (status != HYBRID_OK ||
+        (unsigned long)(size_t)required != required) {
+        fprintf(stderr, "hybrid ciphertext sizing failed: %d\n", status);
+        goto cleanup;
+    }
+    ciphertext = (unsigned char *)malloc((size_t)required);
+    if (ciphertext == NULL) {
+        fprintf(stderr, "not enough memory for hybrid ciphertext\n");
+        goto cleanup;
+    }
+    actual = 0UL;
+    status = hybrid_encrypt(&public_key, &rng, plaintext, plaintext_length,
+                            ciphertext, required, &actual);
+    if (status != HYBRID_OK) {
+        fprintf(stderr, "hybrid encryption failed: %d\n", status);
+        goto cleanup;
+    }
+    ok = write_file(output_path, ciphertext, actual);
+    if (ok) {
+        printf("hybrid encrypted: %lu -> %lu bytes\n",
+               plaintext_length, actual);
+    }
+
+cleanup:
+    if (entropy != NULL) {
+        memset(entropy, 0, (size_t)entropy_length);
+        free(entropy);
+    }
+    if (plaintext != NULL) {
+        free(plaintext);
+    }
+    if (ciphertext != NULL) {
+        memset(ciphertext, 0, (size_t)required);
+        free(ciphertext);
+    }
+    memset(&rng, 0, sizeof(rng));
+    return ok;
+}
+
+int demo_run_hybrid_decrypt(const char *private_path,
+                            const char *input_path,
+                            const char *output_path)
+{
+    RSA_PRIVATE_KEY private_key;
+    unsigned char *ciphertext;
+    unsigned char *plaintext;
+    unsigned long ciphertext_length;
+    unsigned long plaintext_capacity;
+    unsigned long plaintext_length;
+    int status;
+    int ok;
+
+    if (same_path(output_path, private_path) ||
+        same_path(output_path, input_path)) {
+        fprintf(stderr, "output path must differ from all input paths\n");
+        return 0;
+    }
+    if (!load_private_key(private_path, &private_key)) {
+        return 0;
+    }
+    ciphertext = NULL;
+    ciphertext_length = 0UL;
+    plaintext = NULL;
+    plaintext_capacity = 0UL;
+    ok = 0;
+    if (!load_file(input_path, 0xffffffffUL,
+                   &ciphertext, &ciphertext_length)) {
+        goto cleanup;
+    }
+    plaintext_capacity = ciphertext_length;
+    if (plaintext_capacity != 0UL) {
+        plaintext = (unsigned char *)malloc((size_t)plaintext_capacity);
+        if (plaintext == NULL) {
+            fprintf(stderr, "not enough memory for hybrid plaintext\n");
+            goto cleanup;
+        }
+    }
+    plaintext_length = 0UL;
+    status = hybrid_decrypt(&private_key, ciphertext, ciphertext_length,
+                            plaintext, plaintext_capacity,
+                            &plaintext_length);
+    if (status != HYBRID_OK) {
+        fprintf(stderr, "hybrid decryption failed: %d\n", status);
+        goto cleanup;
+    }
+    ok = write_file(output_path, plaintext, plaintext_length);
+    if (ok) {
+        printf("hybrid decrypted: %lu -> %lu bytes\n",
+               ciphertext_length, plaintext_length);
+    }
+
+cleanup:
+    if (ciphertext != NULL) {
+        free(ciphertext);
+    }
+    if (plaintext != NULL) {
+        memset(plaintext, 0, (size_t)plaintext_capacity);
+        free(plaintext);
+    }
+    memset(&private_key, 0, sizeof(private_key));
     return ok;
 }

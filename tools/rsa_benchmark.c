@@ -4,8 +4,8 @@
 
 #include "rsa.h"
 
-#define PUBLIC_REPETITIONS 100U
-#define PRIVATE_REPETITIONS 3U
+#define PUBLIC_REPETITIONS 10000U
+#define PRIVATE_REPETITIONS 2000U
 
 static const unsigned char benchmark_key[8] = {
     0x13, 0x34, 0x57, 0x79, 0x9b, 0xbc, 0xdf, 0xf1

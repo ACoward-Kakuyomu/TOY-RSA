@@ -6,15 +6,17 @@
 
 - DES-CBC によるファイル暗号化・復号
 - RSA公開鍵・秘密鍵ファイルの生成
+- RSA鍵を使うWeek9ハイブリッド暗号化・復号
 
 ## 実行ファイル
 
 ```text
 des
 rsa-keygen
+hybrid
 ```
 
-Windows では `des.exe`、`rsa-keygen.exe` となる。
+Windows では `des.exe`、`rsa-keygen.exe`、`hybrid.exe` となる。
 
 ## サブコマンド
 
@@ -23,15 +25,18 @@ des encrypt KEY_HEX IV_HEX INPUT OUTPUT
 des decrypt KEY_HEX IV_HEX INPUT OUTPUT
 
 rsa-keygen ENTROPY PUBLIC_KEY PRIVATE_KEY [BITS]
+
+hybrid encrypt PUBLIC_KEY ENTROPY INPUT OUTPUT
+hybrid decrypt PRIVATE_KEY INPUT OUTPUT
 ```
 
 `KEY_HEX` と `IV_HEX` はそれぞれ正確に16桁の16進文字列とする。DES 鍵のパリティや弱鍵は教材として利用者が観察できるよう、DES-CBC サブコマンドでは自動修正・拒否しない。
 
-RSA鍵長 `BITS` の既定値は512。指定時は偶数、32以上、`BIGINT_MAX_BITS`以下でなければならない。
+RSA鍵長 `BITS` の既定値は512。指定時は偶数、32以上、`BIGINT_MAX_BITS`以下でなければならない。ただしハイブリッド形式で使うには法幅が21バイト以上必要なので、168ビット以上を使用する。通常は物語既定の512ビットを使う。
 
 ## エントロピーファイル
 
-`rsa-keygen` は8～4096バイトのエントロピーファイルを必須とする。内容を RNG の外部エントロピー入力へ渡し、RNG 側で現在時刻とプロセサ時刻を追加混合する。
+`rsa-keygen` と `hybrid encrypt` は8～4096バイトのエントロピーファイルを必須とする。内容を RNG の外部エントロピー入力へ渡し、RNG 側で現在時刻とプロセサ時刻を追加混合する。
 
 サンプルCLIは `rand()`、固定シード、本文、ファイル名から暗号用乱数を作らない。エントロピーは OS の乱数機能などで別途用意する。現代の OS 乱数はサンプルを起動するための外部入力に限って使われ、プロジェクトの暗号アルゴリズムを置き換えない。
 
@@ -55,9 +60,10 @@ CMake テストは一時ディレクトリで次を実行する。
 
 - DES-CBC ファイル暗号化・復号と原文比較
 - 256ビットのテスト用 RSA 鍵ファイル生成
+- 生成した鍵によるハイブリッド暗号化・復号と原文比較
 
 256ビット鍵はテスト時間短縮だけが目的であり、安全性を意味しない。通常利用例は512ビットとする。
 
 ## 現代の暗号技術から見た注意点
 
-この CLI を追加しても、DES の現代的な弱点は変わらない。生成されるファイルを現代の機密情報保護に使用してはならない。
+このCLIを追加しても、DES、512ビットRSA、raw RSA、64ビットMDC、独自ハイブリッド形式の現代的な弱点は変わらない。生成されるファイルを現代の機密情報保護に使用してはならない。

@@ -1,5 +1,5 @@
 if(NOT DEFINED DES_EXE OR NOT DEFINED RSA_KEYGEN_EXE OR
-   NOT DEFINED SAMPLE_TEST_DIR)
+   NOT DEFINED HYBRID_EXE OR NOT DEFINED SAMPLE_TEST_DIR)
     message(FATAL_ERROR "sample executable paths and test directory are required")
 endif()
 
@@ -13,6 +13,8 @@ set(des_cipher "${SAMPLE_TEST_DIR}/des.bin")
 set(des_plain "${SAMPLE_TEST_DIR}/des-restored.txt")
 set(public_key "${SAMPLE_TEST_DIR}/public.trp8")
 set(private_key "${SAMPLE_TEST_DIR}/private.trs8")
+set(hybrid_cipher "${SAMPLE_TEST_DIR}/hybrid.bin")
+set(hybrid_plain "${SAMPLE_TEST_DIR}/hybrid-restored.txt")
 
 file(WRITE "${plain}"
     "TOY-RSA sample file\nDES-CBC and hybrid round trip.\n")
@@ -51,6 +53,17 @@ endif()
 run_sample("RSA key generation"
     "${RSA_KEYGEN_EXE}" "${key_entropy}"
     "${public_key}" "${private_key}" 256)
+run_sample("hybrid encryption"
+    "${HYBRID_EXE}" encrypt "${public_key}" "${message_entropy}"
+    "${plain}" "${hybrid_cipher}")
+run_sample("hybrid decryption"
+    "${HYBRID_EXE}" decrypt "${private_key}"
+    "${hybrid_cipher}" "${hybrid_plain}")
+execute_process(
+    COMMAND "${CMAKE_COMMAND}" -E compare_files
+        "${plain}" "${hybrid_plain}"
+    RESULT_VARIABLE compare_result
+)
 if(NOT compare_result EQUAL 0)
     message(FATAL_ERROR "hybrid sample round trip differs")
 endif()
