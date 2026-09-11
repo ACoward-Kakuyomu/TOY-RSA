@@ -2,23 +2,11 @@
 #include <string.h>
 
 #include "montgomery.h"
-#include "number.h"
 
 static int mont_bigint_error(int status)
 {
     if (status == BIGINT_ERR_INVALID) {
         return MONT_ERR_INVALID;
-    }
-    return MONT_ERR_ARITHMETIC;
-}
-
-static int mont_number_error(int status)
-{
-    if (status == NUMBER_ERR_INVALID) {
-        return MONT_ERR_INVALID;
-    }
-    if (status == NUMBER_ERR_MODULUS) {
-        return MONT_ERR_MODULUS;
     }
     return MONT_ERR_ARITHMETIC;
 }
@@ -159,32 +147,70 @@ static BIGINT_LIMB mont_compute_n0_prime(BIGINT_LIMB least_word)
     return (BIGINT_LIMB)((0UL - inverse) & BIGINT_LIMB_MASK);
 }
 
-static int mont_mod_double(const BIGINT *value,
-                           const BIGINT *modulus,
-                           BIGINT *result)
+static int mont_words_at_least_modulus(const BIGINT *value,
+                                       const BIGINT *modulus,
+                                       unsigned int limbs)
 {
-    BIGINT distance;
-    BIGINT temporary;
-    int comparison;
-    int status;
+    unsigned int index;
 
-    status = bigint_subtract(modulus, value, &distance);
-    if (status != BIGINT_OK) {
-        return mont_bigint_error(status);
+    index = limbs;
+    while (index != 0U) {
+        --index;
+        if (value->limb[index] > modulus->limb[index]) {
+            return 1;
+        }
+        if (value->limb[index] < modulus->limb[index]) {
+            return 0;
+        }
     }
-    status = bigint_compare(value, &distance, &comparison);
-    if (status != BIGINT_OK) {
-        return mont_bigint_error(status);
+    return 1;
+}
+
+static int mont_mod_double_in_place(BIGINT *value,
+                                    const BIGINT *modulus,
+                                    unsigned int limbs)
+{
+    unsigned long doubled;
+    unsigned long carry;
+    unsigned long borrow;
+    unsigned long left_word;
+    unsigned long subtrahend;
+    unsigned long difference;
+    unsigned int index;
+    int subtract_modulus;
+
+    carry = 0UL;
+    for (index = 0U; index < limbs; ++index) {
+        doubled = (unsigned long)value->limb[index] * 2UL + carry;
+        value->limb[index] =
+            (BIGINT_LIMB)(doubled & BIGINT_LIMB_MASK);
+        carry = doubled >> BIGINT_LIMB_BITS;
     }
-    if (comparison >= 0) {
-        status = bigint_subtract(value, &distance, &temporary);
-    } else {
-        status = bigint_add(value, value, &temporary);
+    subtract_modulus = carry != 0UL ||
+        mont_words_at_least_modulus(value, modulus, limbs);
+    if (subtract_modulus) {
+        borrow = 0UL;
+        for (index = 0U; index < limbs; ++index) {
+            left_word = value->limb[index];
+            subtrahend = (unsigned long)modulus->limb[index] + borrow;
+            if (left_word >= subtrahend) {
+                difference = left_word - subtrahend;
+                borrow = 0UL;
+            } else {
+                difference = BIGINT_LIMB_BASE + left_word - subtrahend;
+                borrow = 1UL;
+            }
+            value->limb[index] =
+                (BIGINT_LIMB)(difference & BIGINT_LIMB_MASK);
+        }
+        if (carry != borrow) {
+            return MONT_ERR_ARITHMETIC;
+        }
     }
-    if (status != BIGINT_OK) {
-        return mont_bigint_error(status);
+    value->used = limbs;
+    while (value->used != 0U && value->limb[value->used - 1U] == 0U) {
+        --value->used;
     }
-    memcpy(result, &temporary, sizeof(temporary));
     return MONT_OK;
 }
 
@@ -225,22 +251,19 @@ int mont_init(MONT_CTX *context, const BIGINT *modulus)
     memcpy(&temporary.modulus, modulus, sizeof(temporary.modulus));
     temporary.limbs = modulus->used;
     temporary.n0_prime = mont_compute_n0_prime(modulus->limb[0]);
-    memcpy(&temporary.r_mod_n, &one, sizeof(one));
+    memcpy(&temporary.r2_mod_n, &one, sizeof(one));
     double_count = temporary.limbs * BIGINT_LIMB_BITS;
-    for (iteration = 0U; iteration < double_count; ++iteration) {
-        status = mont_mod_double(&temporary.r_mod_n,
-                                 &temporary.modulus,
-                                 &temporary.r_mod_n);
+    for (iteration = 0U; iteration < double_count * 2U; ++iteration) {
+        status = mont_mod_double_in_place(&temporary.r2_mod_n,
+                                          &temporary.modulus,
+                                          temporary.limbs);
         if (status != MONT_OK) {
             return status;
         }
-    }
-    status = number_mod_multiply(&temporary.r_mod_n,
-                                 &temporary.r_mod_n,
-                                 &temporary.modulus,
-                                 &temporary.r2_mod_n);
-    if (status != NUMBER_OK) {
-        return mont_number_error(status);
+        if (iteration + 1U == double_count) {
+            memcpy(&temporary.r_mod_n, &temporary.r2_mod_n,
+                   sizeof(temporary.r_mod_n));
+        }
     }
     temporary.initialized = MONT_CONTEXT_READY;
     if (!mont_context_valid(&temporary)) {
@@ -272,9 +295,9 @@ int mont_wide_from_bigint(const BIGINT *value, MONT_WIDE *wide_value)
     return MONT_OK;
 }
 
-int mont_wide_multiply(const BIGINT *left,
-                       const BIGINT *right,
-                       MONT_WIDE *wide_product)
+static void mont_wide_multiply_unchecked(const BIGINT *left,
+                                         const BIGINT *right,
+                                         MONT_WIDE *wide_product)
 {
     MONT_WIDE temporary;
     unsigned long accumulator;
@@ -282,23 +305,10 @@ int mont_wide_multiply(const BIGINT *left,
     unsigned int target;
     unsigned int left_index;
     unsigned int right_index;
-    int status;
-
-    if (left == NULL || right == NULL || wide_product == NULL) {
-        return MONT_ERR_NULL;
-    }
-    status = mont_validate_bigint(left);
-    if (status != MONT_OK) {
-        return status;
-    }
-    status = mont_validate_bigint(right);
-    if (status != MONT_OK) {
-        return status;
-    }
     mont_wide_clear(&temporary);
     if (left->used == 0U || right->used == 0U) {
         memcpy(wide_product, &temporary, sizeof(temporary));
-        return MONT_OK;
+        return;
     }
     for (left_index = 0U; left_index < left->used; ++left_index) {
         carry = 0UL;
@@ -320,6 +330,26 @@ int mont_wide_multiply(const BIGINT *left,
     temporary.used = left->used + right->used;
     mont_wide_normalize(&temporary);
     memcpy(wide_product, &temporary, sizeof(temporary));
+}
+
+int mont_wide_multiply(const BIGINT *left,
+                       const BIGINT *right,
+                       MONT_WIDE *wide_product)
+{
+    int status;
+
+    if (left == NULL || right == NULL || wide_product == NULL) {
+        return MONT_ERR_NULL;
+    }
+    status = mont_validate_bigint(left);
+    if (status != MONT_OK) {
+        return status;
+    }
+    status = mont_validate_bigint(right);
+    if (status != MONT_OK) {
+        return status;
+    }
+    mont_wide_multiply_unchecked(left, right, wide_product);
     return MONT_OK;
 }
 
@@ -415,9 +445,9 @@ static int mont_subtract_modulus_from_segment(const MONT_CTX *context,
     return MONT_OK;
 }
 
-int mont_reduce(const MONT_CTX *context,
-                const MONT_WIDE *wide_value,
-                BIGINT *result)
+static int mont_reduce_unchecked(const MONT_CTX *context,
+                                 const MONT_WIDE *wide_value,
+                                 BIGINT *result)
 {
     MONT_WIDE work;
     BIGINT temporary;
@@ -427,22 +457,8 @@ int mont_reduce(const MONT_CTX *context,
     unsigned int outer;
     unsigned int inner;
     unsigned int target;
-    unsigned int index;
-    int comparison;
     int status;
 
-    if (context == NULL || wide_value == NULL || result == NULL) {
-        return MONT_ERR_NULL;
-    }
-    if (!mont_context_valid(context)) {
-        return MONT_ERR_CONTEXT;
-    }
-    if (!mont_wide_valid(wide_value)) {
-        return MONT_ERR_INVALID;
-    }
-    if (!mont_wide_less_than_n_r(context, wide_value)) {
-        return MONT_ERR_RANGE;
-    }
     memcpy(&work, wide_value, sizeof(work));
     for (outer = 0U; outer < context->limbs; ++outer) {
         multiplier = ((unsigned long)work.limb[outer] *
@@ -479,12 +495,6 @@ int mont_reduce(const MONT_CTX *context,
             return status;
         }
     }
-    for (index = context->limbs * 2U;
-         index < MONT_WIDE_MAX_LIMBS; ++index) {
-        if (work.limb[index] != 0U) {
-            return MONT_ERR_ARITHMETIC;
-        }
-    }
     status = bigint_zero(&temporary);
     if (status != BIGINT_OK) {
         return mont_bigint_error(status);
@@ -496,20 +506,27 @@ int mont_reduce(const MONT_CTX *context,
            temporary.limb[temporary.used - 1U] == 0U) {
         --temporary.used;
     }
-    if (temporary.used < BIGINT_MAX_LIMBS) {
-        memset(temporary.limb + temporary.used, 0,
-               (BIGINT_MAX_LIMBS - temporary.used) *
-               sizeof(BIGINT_LIMB));
-    }
-    status = bigint_compare(&temporary, &context->modulus, &comparison);
-    if (status != BIGINT_OK) {
-        return mont_bigint_error(status);
-    }
-    if (comparison >= 0) {
-        return MONT_ERR_ARITHMETIC;
-    }
     memcpy(result, &temporary, sizeof(temporary));
     return MONT_OK;
+}
+
+int mont_reduce(const MONT_CTX *context,
+                const MONT_WIDE *wide_value,
+                BIGINT *result)
+{
+    if (context == NULL || wide_value == NULL || result == NULL) {
+        return MONT_ERR_NULL;
+    }
+    if (!mont_context_valid(context)) {
+        return MONT_ERR_CONTEXT;
+    }
+    if (!mont_wide_valid(wide_value)) {
+        return MONT_ERR_INVALID;
+    }
+    if (!mont_wide_less_than_n_r(context, wide_value)) {
+        return MONT_ERR_RANGE;
+    }
+    return mont_reduce_unchecked(context, wide_value, result);
 }
 
 static int mont_operand_in_range(const MONT_CTX *context,
@@ -532,13 +549,29 @@ static int mont_operand_in_range(const MONT_CTX *context,
     return MONT_OK;
 }
 
+static int mont_mul_unchecked(const MONT_CTX *context,
+                              const BIGINT *left,
+                              const BIGINT *right,
+                              BIGINT *result)
+{
+    MONT_WIDE product;
+    BIGINT temporary;
+    int status;
+
+    mont_wide_multiply_unchecked(left, right, &product);
+    status = mont_reduce_unchecked(context, &product, &temporary);
+    if (status != MONT_OK) {
+        return status;
+    }
+    memcpy(result, &temporary, sizeof(temporary));
+    return MONT_OK;
+}
+
 int mont_mul(const MONT_CTX *context,
              const BIGINT *left,
              const BIGINT *right,
              BIGINT *result)
 {
-    MONT_WIDE product;
-    BIGINT temporary;
     int status;
 
     if (context == NULL || left == NULL || right == NULL || result == NULL) {
@@ -555,15 +588,27 @@ int mont_mul(const MONT_CTX *context,
     if (status != MONT_OK) {
         return status;
     }
-    status = mont_wide_multiply(left, right, &product);
+    return mont_mul_unchecked(context, left, right, result);
+}
+
+static int mont_to_unchecked(const MONT_CTX *context,
+                             const BIGINT *value,
+                             BIGINT *montgomery_value)
+{
+    BIGINT reduced;
+    BIGINT temporary;
+    int status;
+
+    status = bigint_modulo(value, &context->modulus, &reduced);
+    if (status != BIGINT_OK) {
+        return mont_bigint_error(status);
+    }
+    status = mont_mul_unchecked(context, &reduced, &context->r2_mod_n,
+                                &temporary);
     if (status != MONT_OK) {
         return status;
     }
-    status = mont_reduce(context, &product, &temporary);
-    if (status != MONT_OK) {
-        return status;
-    }
-    memcpy(result, &temporary, sizeof(temporary));
+    memcpy(montgomery_value, &temporary, sizeof(temporary));
     return MONT_OK;
 }
 
@@ -571,8 +616,6 @@ int mont_to(const MONT_CTX *context,
             const BIGINT *value,
             BIGINT *montgomery_value)
 {
-    BIGINT reduced;
-    BIGINT temporary;
     int status;
 
     if (context == NULL || value == NULL || montgomery_value == NULL) {
@@ -585,15 +628,27 @@ int mont_to(const MONT_CTX *context,
     if (status != MONT_OK) {
         return status;
     }
-    status = bigint_modulo(value, &context->modulus, &reduced);
+    return mont_to_unchecked(context, value, montgomery_value);
+}
+
+static int mont_from_unchecked(const MONT_CTX *context,
+                               const BIGINT *montgomery_value,
+                               BIGINT *value)
+{
+    BIGINT one;
+    BIGINT temporary;
+    int status;
+
+    status = bigint_from_ulong(&one, 1UL);
     if (status != BIGINT_OK) {
         return mont_bigint_error(status);
     }
-    status = mont_mul(context, &reduced, &context->r2_mod_n, &temporary);
+    status = mont_mul_unchecked(context, montgomery_value, &one,
+                                &temporary);
     if (status != MONT_OK) {
         return status;
     }
-    memcpy(montgomery_value, &temporary, sizeof(temporary));
+    memcpy(value, &temporary, sizeof(temporary));
     return MONT_OK;
 }
 
@@ -601,8 +656,6 @@ int mont_from(const MONT_CTX *context,
               const BIGINT *montgomery_value,
               BIGINT *value)
 {
-    BIGINT one;
-    BIGINT temporary;
     int status;
 
     if (context == NULL || montgomery_value == NULL || value == NULL) {
@@ -611,16 +664,11 @@ int mont_from(const MONT_CTX *context,
     if (!mont_context_valid(context)) {
         return MONT_ERR_CONTEXT;
     }
-    status = bigint_from_ulong(&one, 1UL);
-    if (status != BIGINT_OK) {
-        return mont_bigint_error(status);
-    }
-    status = mont_mul(context, montgomery_value, &one, &temporary);
+    status = mont_operand_in_range(context, montgomery_value);
     if (status != MONT_OK) {
         return status;
     }
-    memcpy(value, &temporary, sizeof(temporary));
-    return MONT_OK;
+    return mont_from_unchecked(context, montgomery_value, value);
 }
 
 int mont_pow(const MONT_CTX *context,
@@ -630,10 +678,11 @@ int mont_pow(const MONT_CTX *context,
 {
     BIGINT result_bar;
     BIGINT power_bar;
-    BIGINT exponent_work;
     BIGINT temporary;
-    int is_zero;
-    int is_odd;
+    unsigned int exponent_bits;
+    unsigned int bit_index;
+    unsigned int limb_index;
+    unsigned int limb_bit;
     int status;
 
     if (context == NULL || base == NULL || exponent == NULL ||
@@ -652,47 +701,34 @@ int mont_pow(const MONT_CTX *context,
         return status;
     }
     memcpy(&result_bar, &context->r_mod_n, sizeof(result_bar));
-    status = mont_to(context, base, &power_bar);
+    status = mont_to_unchecked(context, base, &power_bar);
     if (status != MONT_OK) {
         return status;
     }
-    memcpy(&exponent_work, exponent, sizeof(exponent_work));
-    for (;;) {
-        status = bigint_is_zero(&exponent_work, &is_zero);
-        if (status != BIGINT_OK) {
-            return mont_bigint_error(status);
-        }
-        if (is_zero != 0) {
-            break;
-        }
-        status = bigint_is_odd(&exponent_work, &is_odd);
-        if (status != BIGINT_OK) {
-            return mont_bigint_error(status);
-        }
-        if (is_odd != 0) {
-            status = mont_mul(context, &result_bar, &power_bar,
-                              &result_bar);
+    status = bigint_bit_length(exponent, &exponent_bits);
+    if (status != BIGINT_OK) {
+        return mont_bigint_error(status);
+    }
+    for (bit_index = 0U; bit_index < exponent_bits; ++bit_index) {
+        limb_index = bit_index / BIGINT_LIMB_BITS;
+        limb_bit = bit_index % BIGINT_LIMB_BITS;
+        if ((exponent->limb[limb_index] &
+             (BIGINT_LIMB)(1U << limb_bit)) != 0U) {
+            status = mont_mul_unchecked(context, &result_bar, &power_bar,
+                                        &result_bar);
             if (status != MONT_OK) {
                 return status;
             }
         }
-        status = bigint_shift_right(&exponent_work, 1U, &exponent_work);
-        if (status != BIGINT_OK) {
-            return mont_bigint_error(status);
-        }
-        status = bigint_is_zero(&exponent_work, &is_zero);
-        if (status != BIGINT_OK) {
-            return mont_bigint_error(status);
-        }
-        if (is_zero == 0) {
-            status = mont_mul(context, &power_bar, &power_bar,
-                              &power_bar);
+        if (bit_index + 1U < exponent_bits) {
+            status = mont_mul_unchecked(context, &power_bar, &power_bar,
+                                        &power_bar);
             if (status != MONT_OK) {
                 return status;
             }
         }
     }
-    status = mont_from(context, &result_bar, &temporary);
+    status = mont_from_unchecked(context, &result_bar, &temporary);
     if (status != MONT_OK) {
         return status;
     }
